@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#14532d">
+<title>Khata – Personal Finance</title>
+<style>
+:root{--bg:#f6f4ee;--card:#fff;--ink:#1c2420;--mut:#66706a;--line:#e3e0d6;--pri:#14532d;--pri2:#dcefe2;--inc:#15803d;--exp:#b91c1c;--warn:#b45309;--r:14px}
+:root[data-t=dark]{--bg:#121714;--card:#1b231e;--ink:#eaf0ec;--mut:#9aa8a0;--line:#2b362f;--pri:#4ade80;--pri2:#173323;--inc:#4ade80;--exp:#f87171;--warn:#fbbf24}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 "Segoe UI",Roboto,system-ui,sans-serif;padding-bottom:84px}
+h1,h2,h3{font-family:Georgia,"Times New Roman",serif;margin:.2em 0}h2{font-size:1.3rem}h3{font-size:1.05rem}
+header{position:sticky;top:0;background:var(--bg);padding:10px 12px;display:flex;gap:8px;align-items:center;z-index:5;border-bottom:1px solid var(--line)}
+header b{font-family:Georgia,serif;font-size:1.25rem;margin-right:auto}
+main{max-width:760px;margin:auto;padding:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);padding:14px;margin-bottom:12px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.grid .card{margin:0}
+.big{font-size:1.35rem;font-weight:700;font-variant-numeric:tabular-nums}.mut{color:var(--mut);font-size:.85rem}
+.inc{color:var(--inc)}.exp{color:var(--exp)}.warn{color:var(--warn)}
+button,select,input,textarea{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:10px;padding:11px 12px;min-height:44px}
+input,select,textarea{width:100%}label{display:block;margin:10px 0 4px;font-size:.9rem;font-weight:600}
+button{cursor:pointer}button.p{background:var(--pri);color:var(--bg);border-color:var(--pri);font-weight:700}button.d{color:var(--exp)}button.s{padding:6px 10px;min-height:34px;font-size:.85rem}
+:focus-visible{outline:3px solid var(--pri);outline-offset:2px}
+nav{position:fixed;bottom:0;left:0;right:0;background:var(--card);border-top:1px solid var(--line);display:flex;padding-bottom:env(safe-area-inset-bottom);z-index:6}
+nav button{flex:1;border:0;border-radius:0;background:none;font-size:.72rem;padding:8px 2px;color:var(--mut)}nav button.on{color:var(--pri);font-weight:700}nav button.add{color:var(--bg);background:var(--pri);border-radius:50%;flex:0 0 54px;height:54px;margin:-16px 6px 0;font-size:1.7rem;line-height:1;padding:0}
+.row{display:flex;gap:8px;align-items:center}.row>*{flex:1}.row>.f0{flex:0 0 auto}
+.tx{display:flex;justify-content:space-between;gap:8px;padding:10px 0;border-bottom:1px solid var(--line)}.tx:last-child{border:0}
+.bar{height:10px;background:var(--pri2);border-radius:6px;overflow:hidden;margin:4px 0}.bar i{display:block;height:100%;background:var(--pri)}.bar i.w{background:var(--warn)}.bar i.x{background:var(--exp)}
+.seg{display:flex;gap:6px}.seg button{flex:1}.seg button.on{background:var(--pri);color:var(--bg);border-color:var(--pri)}
+dialog{border:0;border-radius:18px;padding:16px;width:min(560px,94vw);max-height:92vh;background:var(--bg);color:var(--ink)}dialog::backdrop{background:#0008}
+#toast{position:fixed;bottom:92px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;z-index:20;display:none;max-width:92vw}
+.banner{background:#fef3c7;color:#78350f;border-radius:10px;padding:10px;margin-bottom:12px;font-size:.9rem}
+table{width:100%;border-collapse:collapse;font-size:.88rem;font-variant-numeric:tabular-nums}td,th{padding:6px 4px;text-align:right;border-bottom:1px solid var(--line)}td:first-child,th:first-child{text-align:left}
+.err{color:var(--exp);font-size:.85rem;min-height:1.2em}
+@media print{header,nav,.np,#toast{display:none!important}body{background:#fff;color:#000}.card{border-color:#999}}
+</style></head><body>
+<div id="app"></div><div id="toast" role="status"></div>
+<dialog id="dlg"></dialog>
+<script>
+'use strict';
+/* ===== helpers ===== */
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const pad=n=>String(n).padStart(2,'0');
+const today=()=>{const d=new Date();return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`};
+const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+/* money is stored as integer paisa (1/100) – never floats */
+function toMinor(v){const s=String(v).replace(/,/g,'').trim();if(!/^\d+(\.\d{1,2})?$/.test(s))return null;const[a,b='']=s.split('.');return +a*100+ +(b+'00').slice(0,2)}
+function fmt(m){const neg=m<0;m=Math.abs(m);const w=Math.floor(m/100),p=m%100;return (neg?'-':'')+CFG.cur+' '+w.toLocaleString('en-IN')+'.'+pad(p)}
+function toast(msg,undo){const t=$('#toast');t.innerHTML=esc(msg)+(undo?' <button class="s" id="undoB">Undo</button>':'');t.style.display='block';if(undo)$('#undoB').onclick=()=>{undo();t.style.display='none'};clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',undo?7000:2500)}
+
+/* ===== database layer (IndexedDB, separate from UI) ===== */
+let db=null,dbOK=false;
+const DB={
+ open(){return new Promise((res,rej)=>{if(!window.indexedDB)return rej(new Error('IndexedDB not available'));const r=indexedDB.open('khata',1);
+  r.onupgradeneeded=()=>{const d=r.result;d.createObjectStore('tx',{keyPath:'id'});d.createObjectStore('kv',{keyPath:'k'})};
+  r.onsuccess=()=>{db=r.result;dbOK=true;res()};r.onerror=()=>rej(r.error);r.onblocked=()=>rej(new Error('blocked'))})},
+ run(store,mode,fn){return new Promise((res,rej)=>{if(!dbOK)return res(null);const t=db.transaction(store,mode),s=t.objectStore(store);let out;fn(s,v=>out=v);t.oncomplete=()=>res(out);t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)})},
+ all(st){return this.run(st,'readonly',(s,o)=>{const q=s.getAll();q.onsuccess=()=>o(q.result)})},
+ put(st,v){return this.run(st,'readwrite',s=>s.put(v))},
+ del(st,k){return this.run(st,'readwrite',s=>s.delete(k))},
+ clear(st){return this.run(st,'readwrite',s=>s.clear())},
+ putMany(st,arr){return this.run(st,'readwrite',s=>arr.forEach(v=>s.put(v)))}
+};
+
+/* ===== state ===== */
+const DEF_EXP=['Food & groceries','Rent & housing','Electricity & utilities','Internet & phone','Transport & fuel','Health & medicine','Education','Shopping & clothing','Entertainment','Family expenses','Travel','Personal care','Debt payments','Subscriptions','Gifts & donations','Other expenses'];
+const DEF_INC=['Salary','Freelancing','Business income','Side income','Interest','Investment income','Rental income','Gifts received','Refunds & reimbursements','Other income'];
+const PAY=['Cash','Bank transfer','Debit card','Credit card','Digital wallet'];
+const DEF_CFG=()=>({cur:'रु',theme:'auto',warn:80,defAcc:'ebl',weekStart:0,lastBackup:null,
+ exp:[...DEF_EXP],inc:[...DEF_INC],budgets:{},
+ accs:[
+  {id:'ebl',name:'EBL',kind:'asset',open:720834},
+  {id:'nabil',name:'Nabil',kind:'asset',open:12565},
+  {id:'cashnew',name:'Cash In Hand (New Note)',kind:'asset',open:230000},
+  {id:'cash',name:'Cash In Hand',kind:'asset',open:305500},
+  {id:'r_avo',name:'Receivable – Avocado',kind:'recv',open:1029000},
+  {id:'r_biy',name:'Receivable – Biyam Sir',kind:'recv',open:150000},
+  {id:'r_nik',name:'Receivable – Nikhil',kind:'recv',open:350000}]});
+let CFG=DEF_CFG(),TX=[];
+const now=new Date();
+const S={view:'dash',y:now.getFullYear(),m:now.getMonth()+1,q:'',type:'all',page:1,lastDel:null,busy:false};
+const saveCfg=()=>DB.put('kv',{k:'cfg',v:CFG}).catch(()=>toast('Could not save settings'));
+const ym=()=>`${S.y}-${pad(S.m)}`;
+const sumT=(a,t)=>a.reduce((s,x)=>x.type===t?s+x.amt:s,0);
+const accName=id=>(CFG.accs.find(a=>a.id===id)||{name:'(removed)'}).name;
+function balances(){const b={};CFG.accs.forEach(a=>b[a.id]=a.open);
+ TX.forEach(t=>{if(!(t.acc in b))return;if(t.type==='income')b[t.acc]+=t.amt;else if(t.type==='expense')b[t.acc]-=t.amt;else if(t.type==='transfer'){b[t.acc]-=t.amt;if(t.to in b)b[t.to]+=t.amt}});return b}
+
+/* ===== calculations (separate from UI) ===== */
+const byCat=(arr,type)=>{const m={};arr.filter(t=>t.type===type).forEach(t=>m[t.cat]=(m[t.cat]||0)+t.amt);return Object.entries(m).sort((a,b)=>b[1]-a[1])};
+const budgetFor=k=>CFG.budgets[k]||{total:0,cats:{}};
+function monthSeries(y){const r=[];for(let m=1;m<=12;m++){const a=TX.filter(t=>t.date.startsWith(`${y}-${pad(m)}`));r.push({m,inc:sumT(a,'income'),exp:sumT(a,'expense')})}return r}
+
+/* ===== UI ===== */
+function render(){
+ const th=CFG.theme==='auto'?(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'):CFG.theme;document.documentElement.dataset.t=th;
+ const yrs=new Set([S.y,now.getFullYear(),...TX.map(t=>+t.date.slice(0,4))]);
+ const V={dash:vDash,tx:vTx,bud:vBud,rep:vRep,set:vSet}[S.view]();
+ $('#app').innerHTML=`${dbOK?'':'<div class="banner"><b>Storage unavailable.</b> Your browser blocked IndexedDB for this file, so nothing will be saved after closing. Open the file in Chrome/Firefox from the browser (not a preview), or host it at any https/localhost address. Meanwhile use Settings → Export JSON to keep your work.</div>'}
+ <header class="np"><b>Khata</b><select id="ys" aria-label="Year" style="width:auto" onchange="S.y=+this.value;S.page=1;render()">${[...yrs].sort().map(y=>`<option ${y===S.y?'selected':''}>${y}</option>`)}</select>
+ <select aria-label="Month" style="width:auto" onchange="S.m=+this.value;S.page=1;render()">${MN.map((n,i)=>`<option value="${i+1}" ${i+1===S.m?'selected':''}>${n}</option>`)}</select></header>
+ <main>${V}</main>
+ <nav class="np">${[['dash','Home'],['tx','Activity'],['add','+'],['bud','Budgets'],['rep','Reports'],['set','Settings']].map(([k,l])=>k==='add'?`<button class="add" aria-label="Add transaction" onclick="openForm()">+</button>`:`<button class="${S.view===k?'on':''}" onclick="go('${k}')">${l}</button>`).join('')}</nav>`;
+}
+const go=v=>{S.view=v;render();scrollTo(0,0)};
+
+function vDash(){
+ const mt=TX.filter(t=>t.date.startsWith(ym())),inc=sumT(mt,'income'),exp=sumT(mt,'expense'),sp=sumT(TX.filter(t=>t.date===today()),'expense');
+ const b=balances(),have=CFG.accs.filter(a=>a.kind==='asset').reduce((s,a)=>s+b[a.id],0),recv=CFG.accs.filter(a=>a.kind==='recv').reduce((s,a)=>s+b[a.id],0);
+ const bg=budgetFor(ym()),left=bg.total?bg.total-exp:null,pct=bg.total?Math.round(exp*100/bg.total):0;
+ const ser=monthSeries(S.y),mx=Math.max(1,...ser.flatMap(s=>[s.inc,s.exp]));
+ const svg=`<svg viewBox="0 0 360 130" width="100%" role="img" aria-label="Income versus expenses by month">${ser.map((s,i)=>{const x=i*30+4,hi=s.inc/mx*100,he=s.exp/mx*100;return `<rect x="${x}" y="${105-hi}" width="11" height="${hi}" fill="var(--inc)" rx="2"/><rect x="${x+12}" y="${105-he}" width="11" height="${he}" fill="var(--exp)" rx="2"/><text x="${x+12}" y="123" font-size="9" text-anchor="middle" fill="var(--mut)">${MN[i][0]}</text>`}).join('')}</svg>`;
+ const cats=byCat(mt,'expense');
+ return `<div class="card"><div class="mut">Money with me (${S.y} balances, all time)</div><div class="big">${fmt(have)}</div>
+ <div class="row" style="margin-top:8px"><div><div class="mut">To receive</div><b>${fmt(recv)}</b></div><div><div class="mut">Total (with me + receivable)</div><b>${fmt(have+recv)}</b></div></div></div>
+ ${TX.length?'':`<div class="card"><h3>No transactions yet</h3><p class="mut">Your opening balances are loaded. Record your first income or expense.</p><button class="p" onclick="openForm()">Add transaction</button></div>`}
+ <div class="grid"><div class="card"><div class="mut">Income · ${MN[S.m-1]}</div><div class="big inc">${fmt(inc)}</div></div>
+ <div class="card"><div class="mut">Expenses · ${MN[S.m-1]}</div><div class="big exp">${fmt(exp)}</div></div>
+ <div class="card"><div class="mut">Net cash flow</div><div class="big ${inc-exp<0?'exp':'inc'}">${fmt(inc-exp)}</div></div>
+ <div class="card"><div class="mut">Spent today</div><div class="big">${fmt(sp)}</div></div>
+ <div class="card"><div class="mut">Budget remaining</div><div class="big ${left!==null&&left<0?'exp':''}">${left===null?'Not set':fmt(left)}</div></div>
+ <div class="card"><div class="mut">Transactions</div><div class="big">${mt.length}</div></div></div>
+ ${bg.total?`<div class="card" style="margin-top:12px"><b>Budget used ${pct}%</b>${barH(pct)}${pct>=100?'<div class="exp">Budget exceeded.</div>':pct>=CFG.warn?`<div class="warn">You have reached ${CFG.warn}% of this month's budget.</div>`:''}</div>`:''}
+ <div class="card" style="margin-top:12px"><h3>Income vs expenses, ${S.y}</h3>${svg}<div class="mut">Green income · red expenses</div></div>
+ <div class="card"><h3>Spending by category</h3>${cats.length?cats.map(([c,v])=>`<div class="row"><span>${esc(c)}</span><b class="f0">${fmt(v)}</b></div>${barH(Math.round(v*100/exp))}`).join(''):'<p class="mut">No expenses this month.</p>'}</div>
+ <p class="mut">Method: cash basis. Income and expenses count when recorded. Transfers between your own accounts (including receipts of money owed to you) change balances only, never income or expenses. Record a refund as income under "Refunds &amp; reimbursements".</p>`}
+const barH=p=>`<div class="bar"><i class="${p>=100?'x':p>=CFG.warn?'w':''}" style="width:${Math.min(100,p)}%"></i></div>`;
+
+function filtered(){const q=S.q.toLowerCase();return TX.filter(t=>t.date.startsWith(ym())&&(S.type==='all'||t.type===S.type)&&(!q||[t.note,t.party,t.cat,t.tags,accName(t.acc)].join(' ').toLowerCase().includes(q))).sort((a,b)=>b.date.localeCompare(a.date)||b.id.localeCompare(a.id))}
+function listHTML(){const a=filtered(),pg=S.page*50,sh=a.slice(0,pg);
+ if(!a.length)return `<p class="mut">Nothing found for ${MN[S.m-1]} ${S.y}.</p>`;
+ return sh.map(t=>`<div class="tx"><div onclick="openForm('${t.id}')" style="flex:1;cursor:pointer"><b>${esc(t.type==='transfer'?`${accName(t.acc)} → ${accName(t.to)}`:t.cat)}</b><div class="mut">${t.date} · ${esc(t.type==='transfer'?'Transfer':accName(t.acc))}${t.pay?' · '+esc(t.pay):''}${t.party?' · '+esc(t.party):''}</div>${t.note?`<div class="mut">${esc(t.note)}</div>`:''}</div>
+ <div style="text-align:right"><b class="${t.type==='income'?'inc':t.type==='expense'?'exp':''}">${t.type==='expense'?'-':t.type==='income'?'+':''}${fmt(t.amt)}</b><div><button class="s" onclick="dup('${t.id}')" aria-label="Duplicate">⧉</button> <button class="s d" onclick="delTx('${t.id}')" aria-label="Delete">🗑</button></div></div></div>`).join('')+(a.length>pg?`<button style="width:100%;margin-top:8px" onclick="S.page++;render()">Show more (${a.length-pg})</button>`:'')}
+function vTx(){return `<h2>Activity · ${MN[S.m-1]} ${S.y}</h2><div class="card"><input id="q" type="search" placeholder="Search notes, people, categories" value="${esc(S.q)}" aria-label="Search" oninput="S.q=this.value;S.page=1;$('#list').innerHTML=listHTML()">
+ <div class="seg" style="margin-top:8px">${['all','expense','income','transfer'].map(t=>`<button class="${S.type===t?'on':''}" onclick="S.type='${t}';S.page=1;render()">${t[0].toUpperCase()+t.slice(1)}</button>`).join('')}</div></div><div class="card" id="list">${listHTML()}</div>`}
+
+function vBud(){const k=ym(),bg=budgetFor(k),mt=TX.filter(t=>t.date.startsWith(k)),sp=Object.fromEntries(byCat(mt,'expense')),tot=sumT(mt,'expense');
+ const yb=Object.entries(CFG.budgets).filter(([k2,v])=>k2.startsWith(S.y)).reduce((s,[,v])=>s+v.total,0);
+ const row=(c)=>{const b=bg.cats[c]||0,u=sp[c]||0,p=b?Math.round(u*100/b):0;return `<div style="margin:10px 0"><div class="row"><label style="margin:0" for="b_${esc(c)}">${esc(c)}</label><input id="b_${esc(c)}" data-c="${esc(c)}" inputmode="decimal" placeholder="0" value="${b?b/100:''}" style="max-width:130px;flex:0 0 130px"></div><div class="mut">Spent ${fmt(u)}${b?` · ${p}% used · ${b-u<0?'over by '+fmt(u-b):fmt(b-u)+' left'}`:''}</div>${b?barH(p):''}${b&&p>=100?'<div class="exp">Over budget</div>':b&&p>=CFG.warn?`<div class="warn">${p}% used</div>`:''}</div>`};
+ return `<h2>Budget · ${MN[S.m-1]} ${S.y}</h2><div class="card"><label for="bt">Total monthly spending budget</label><input id="bt" inputmode="decimal" value="${bg.total?bg.total/100:''}" placeholder="0"><div class="mut">Spent ${fmt(tot)}${bg.total?` · ${bg.total-tot<0?'over by '+fmt(tot-bg.total):fmt(bg.total-tot)+' left'}`:''}</div>${bg.total?barH(Math.round(tot*100/bg.total)):''}
+ <div class="mut" style="margin-top:6px">Annual budget (sum of ${S.y} months): ${fmt(yb)}</div></div>
+ <div class="card"><h3>Category budgets</h3>${CFG.exp.map(row).join('')}<div class="err" id="be"></div><div class="row"><button class="p" onclick="saveBud()">Save budget</button><button onclick="copyBud()">Copy from previous month</button></div></div>`}
+function saveBud(){const t=toMinor($('#bt').value||'0');let ok=t!==null;const cats={};document.querySelectorAll('[data-c]').forEach(i=>{if(!i.value.trim())return;const v=toMinor(i.value);if(v===null)ok=false;else if(v>0)cats[i.dataset.c]=v});
+ if(!ok){$('#be').textContent='Enter amounts as numbers, like 5000 or 5000.50.';return}CFG.budgets[ym()]={total:t,cats};saveCfg();toast('Budget saved');render()}
+function copyBud(){let y=S.y,m=S.m-1;if(!m){m=12;y--}const p=CFG.budgets[`${y}-${pad(m)}`];if(!p)return toast('No budget set for the previous month');CFG.budgets[ym()]=JSON.parse(JSON.stringify(p));saveCfg();toast('Copied');render()}
+
+function vRep(){const ser=monthSeries(S.y),yt=TX.filter(t=>t.date.startsWith(S.y)),ie=sumT(yt,'income'),ee=sumT(yt,'expense'),act=ser.filter(s=>s.exp).length||1;
+ const top=yt.filter(t=>t.type==='expense').sort((a,b)=>b.amt-a.amt).slice(0,5);
+ return `<h2>Annual summary ${S.y}</h2><div class="card"><table><tr><th>Month</th><th>Income</th><th>Expense</th><th>Net</th></tr>${ser.map(s=>`<tr><td>${MN[s.m-1]}</td><td>${fmt(s.inc)}</td><td>${fmt(s.exp)}</td><td class="${s.inc-s.exp<0?'exp':''}">${fmt(s.inc-s.exp)}</td></tr>`).join('')}<tr><th>Total</th><th>${fmt(ie)}</th><th>${fmt(ee)}</th><th>${fmt(ie-ee)}</th></tr></table>
+ <p class="mut">Average monthly spending (months with expenses): ${fmt(Math.round(ee/act))}</p></div>
+ <div class="card"><h3>Spending by category</h3>${byCat(yt,'expense').map(([c,v])=>`<div class="row"><span>${esc(c)}</span><b class="f0">${fmt(v)}</b></div>`).join('')||'<p class="mut">None</p>'}<h3>Income by category</h3>${byCat(yt,'income').map(([c,v])=>`<div class="row"><span>${esc(c)}</span><b class="f0">${fmt(v)}</b></div>`).join('')||'<p class="mut">None</p>'}</div>
+ <div class="card"><h3>Largest expenses</h3>${top.map(t=>`<div class="row"><span>${t.date} ${esc(t.cat)}</span><b class="f0">${fmt(t.amt)}</b></div>`).join('')||'<p class="mut">None</p>'}</div>
+ <div class="card np"><h3>Custom date range</h3><div class="row"><input type="date" id="r1" aria-label="From"><input type="date" id="r2" aria-label="To"></div><button style="margin-top:8px" onclick="range()">Calculate</button><div id="rr"></div></div>
+ <button class="np p" onclick="print()" style="width:100%">Print / Save as PDF</button>`}
+function range(){const a=$('#r1').value,b=$('#r2').value;if(!a||!b||a>b)return $('#rr').innerHTML='<div class="err">Pick a valid start and end date.</div>';const r=TX.filter(t=>t.date>=a&&t.date<=b);$('#rr').innerHTML=`<p>Income <b class="inc">${fmt(sumT(r,'income'))}</b><br>Expenses <b class="exp">${fmt(sumT(r,'expense'))}</b><br>Net <b>${fmt(sumT(r,'income')-sumT(r,'expense'))}</b> · ${r.length} transactions</p>`}
+
+function vSet(){const b=balances();
+ return `<h2>Settings &amp; backup</h2><div class="banner">Export a backup regularly${CFG.lastBackup?` (last: ${new Date(CFG.lastBackup).toLocaleString()})`:' – you have not made one yet'}. Browser data can be cleared, and the HTML file itself is not a backup.</div>
+ <div class="card"><label for="cur">Currency symbol</label><input id="cur" value="${esc(CFG.cur)}" maxlength="6" onchange="CFG.cur=this.value||'रु';saveCfg();render()">
+ <label for="th">Theme</label><select id="th" onchange="CFG.theme=this.value;saveCfg();render()">${['auto','light','dark'].map(t=>`<option ${CFG.theme===t?'selected':''}>${t}</option>`)}</select>
+ <label for="wn">Budget warning at (%)</label><input id="wn" type="number" min="1" max="100" value="${CFG.warn}" onchange="CFG.warn=Math.min(100,Math.max(1,+this.value||80));saveCfg();render()">
+ <label for="da">Default account</label><select id="da" onchange="CFG.defAcc=this.value;saveCfg()">${CFG.accs.map(a=>`<option value="${a.id}" ${CFG.defAcc===a.id?'selected':''}>${esc(a.name)}</option>`)}</select></div>
+ <div class="card"><h3>Accounts</h3>${CFG.accs.map(a=>`<div class="row"><span>${esc(a.name)} <span class="mut">${a.kind==='recv'?'(receivable)':''}</span></span><b class="f0">${fmt(b[a.id])}</b></div>`).join('')}
+ <p class="mut">To record money received from a receivable, add a Transfer from that account to EBL, Nabil or Cash. It reduces what is owed without counting as income.</p>
+ <label for="an">New account</label><div class="row"><input id="an" placeholder="Name"><input id="ao" inputmode="decimal" placeholder="Opening balance"></div><div class="row" style="margin-top:6px"><select id="ak"><option value="asset">Money I hold</option><option value="recv">Money owed to me</option></select><button onclick="addAcc()">Add account</button></div></div>
+ <div class="card"><h3>Categories</h3><div class="row"><input id="cn" placeholder="New category name"><select id="ct"><option value="exp">Expense</option><option value="inc">Income</option></select><button class="f0" onclick="addCat()">Add</button></div><div class="mut" style="margin-top:6px">Tap to remove a custom category (existing transactions keep their label):</div><div>${[...CFG.exp.filter(c=>!DEF_EXP.includes(c)).map(c=>['exp',c]),...CFG.inc.filter(c=>!DEF_INC.includes(c)).map(c=>['inc',c])].map(([t,c])=>`<button class="s" onclick="rmCat('${t}',this.dataset.c)" data-c="${esc(c)}">${esc(c)} ✕</button> `).join('')||'<span class="mut">No custom categories.</span>'}</div></div>
+ <div class="card"><h3>Backup &amp; restore</h3><div class="row"><button class="p" onclick="expJSON()">Export JSON</button><button onclick="expCSV()">Export CSV</button></div><label for="imp">Import JSON backup</label><input type="file" id="imp" accept=".json,application/json" onchange="impFile(this.files[0])"><div class="err" id="ie"></div></div>
+ <div class="card"><h3>Privacy &amp; storage</h3><p class="mut">All data stays on this device in your browser's IndexedDB; nothing is sent anywhere. This is not an encrypted vault: anyone with access to your phone or browser profile may read it. Clearing browser data, some "private" modes, or opening the file through certain file managers can lose or block storage. Back up often.</p><button class="d" onclick="wipe()">Clear all data…</button></div>`}
+function addAcc(){const n=$('#an').value.trim(),o=toMinor($('#ao').value||'0');if(!n||o===null)return toast('Enter a name and a valid opening balance');CFG.accs.push({id:uid(),name:n,kind:$('#ak').value,open:o});saveCfg();render()}
+function addCat(){const n=$('#cn').value.trim(),t=$('#ct').value;if(!n)return;if(CFG[t].includes(n))return toast('That category exists');CFG[t].push(n);saveCfg();render()}
+function rmCat(t,c){if(confirm(`Remove category "${c}"?`)){CFG[t]=CFG[t].filter(x=>x!==c);saveCfg();render()}}
+
+/* ===== transaction form ===== */
+function openForm(id){const t=id?TX.find(x=>x.id===id):{type:'expense',date:today(),acc:CFG.defAcc,pay:'Cash'};
+ const d=$('#dlg');d.innerHTML=`<form id="f" onsubmit="return saveTx(event,'${id||''}')" novalidate><h2>${id?'Edit':'Add'} transaction</h2>
+ <div class="seg" role="group" aria-label="Type">${['expense','income','transfer'].map(x=>`<button type="button" data-ty="${x}" class="${t.type===x?'on':''}" onclick="setTy('${x}')">${x[0].toUpperCase()+x.slice(1)}</button>`).join('')}</div><input type="hidden" id="ty" value="${t.type}">
+ <label for="am">Amount (${esc(CFG.cur)})</label><input id="am" inputmode="decimal" autocomplete="off" value="${t.amt?(t.amt/100).toFixed(2):''}" placeholder="0.00">
+ <div id="catw"></div>
+ <label for="dt">Date</label><input id="dt" type="date" value="${t.date}">
+ <label for="ac" id="aclab">Account</label><select id="ac">${CFG.accs.map(a=>`<option value="${a.id}" ${t.acc===a.id?'selected':''}>${esc(a.name)}</option>`)}</select>
+ <div id="tow" hidden><label for="to">To account</label><select id="to">${CFG.accs.map(a=>`<option value="${a.id}" ${t.to===a.id?'selected':''}>${esc(a.name)}</option>`)}</select></div>
+ <div id="opt"><label for="pm">Payment method</label><select id="pm">${PAY.map(p=>`<option ${t.pay===p?'selected':''}>${p}</option>`)}</select>
+ <label for="pt">Merchant / person / source (optional)</label><input id="pt" value="${esc(t.party||'')}"></div>
+ <label for="nt">Notes (optional)</label><textarea id="nt" rows="2">${esc(t.note||'')}</textarea>
+ <label for="tg">Tags (optional, comma separated)</label><input id="tg" value="${esc(t.tags||'')}">
+ <div class="err" id="fe" role="alert"></div>
+ <div class="row"><button type="button" onclick="$('#dlg').close()">Cancel</button><button class="p" id="sv" type="submit">Save</button></div></form>`;
+ d.dataset.cat=t.cat||'';setTy(t.type);d.showModal();setTimeout(()=>$('#am').focus(),50)}
+function setTy(x){$('#ty').value=x;document.querySelectorAll('[data-ty]').forEach(b=>b.classList.toggle('on',b.dataset.ty===x));
+ const tr=x==='transfer';$('#tow').hidden=!tr;$('#opt').hidden=tr;$('#aclab').textContent=tr?'From account':'Account';
+ const l=x==='income'?CFG.inc:CFG.exp,cur=$('#dlg').dataset.cat;$('#catw').innerHTML=tr?'':`<label for="ct2">Category</label><select id="ct2">${l.map(c=>`<option ${c===cur?'selected':''}>${esc(c)}</option>`)}</select>`}
+async function saveTx(e,id){e.preventDefault();if(S.busy)return false;const ty=$('#ty').value,amt=toMinor($('#am').value),dt=$('#dt').value,err=m=>{$('#fe').textContent=m;return false};
+ if(!amt)return err('Enter an amount greater than zero, like 2500 or 2500.50.');
+ if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)||isNaN(new Date(dt)))return err('Choose a valid date.');
+ const ac=$('#ac').value;if(ty==='transfer'&&ac===$('#to').value)return err('Choose two different accounts for a transfer.');
+ const old=id?TX.find(x=>x.id===id):null;
+ const t={id:id||uid(),type:ty,amt,date:dt,acc:ac,note:$('#nt').value.trim(),tags:$('#tg').value.trim()};
+ if(ty==='transfer')t.to=$('#to').value;else{t.cat=$('#ct2').value;t.pay=$('#pm').value;t.party=$('#pt').value.trim()}
+ S.busy=true;try{await DB.put('tx',t);if(old)Object.assign(old,t);else TX.push(t);$('#dlg').close();const[y,m]=dt.split('-');S.y=+y;S.m=+m;toast('Saved');render()}catch(x){err('Could not save: '+x.message)}finally{S.busy=false}return false}
+async function dup(id){const o=TX.find(x=>x.id===id),t={...o,id:uid(),date:today()};await DB.put('tx',t);TX.push(t);toast('Duplicated with today\'s date');render()}
+async function delTx(id){if(!confirm('Delete this transaction?'))return;const o=TX.find(x=>x.id===id);await DB.del('tx',id);TX=TX.filter(x=>x.id!==id);render();toast('Deleted',async()=>{await DB.put('tx',o);TX.push(o);render()})}
+
+/* ===== backup / restore ===== */
+async function dl(name,text,type){
+ if(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()){
+  try{const FS=Capacitor.registerPlugin('Filesystem'),SH=Capacitor.registerPlugin('Share');
+   const r=await FS.writeFile({path:name,data:text,directory:'CACHE',encoding:'utf8'});
+   await SH.share({title:name,url:r.uri,dialogTitle:'Save or send backup'});return}
+  catch(e){toast('Could not export: '+(e.message||e));return}}
+ const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}
+function backupJSON(){return JSON.stringify({app:'khata',version:1,exported:new Date().toISOString(),cfg:CFG,tx:TX},null,1)}
+function expJSON(){dl(`khata-backup-${today()}.json`,backupJSON(),'application/json');CFG.lastBackup=Date.now();saveCfg();toast('Backup downloaded');render()}
+function expCSV(){const q=v=>{v=String(v??'');if(/^[=+\-@]/.test(v))v="'"+v;return '"'+v.replace(/"/g,'""')+'"'};
+ const rows=[['Date','Type','Amount','Category','Account','To account','Payment','Party','Note','Tags'],...[...TX].sort((a,b)=>a.date.localeCompare(b.date)).map(t=>[t.date,t.type,(t.amt/100).toFixed(2),t.cat||'',accName(t.acc),t.to?accName(t.to):'',t.pay||'',t.party||'',t.note||'',t.tags||''])];
+ dl(`khata-transactions-${today()}.csv`,'\ufeff'+rows.map(r=>r.map(q).join(',')).join('\r\n'),'text/csv')}
+function validTx(t){return t&&typeof t.id==='string'&&['income','expense','transfer'].includes(t.type)&&Number.isInteger(t.amt)&&t.amt>0&&/^\d{4}-\d{2}-\d{2}$/.test(t.date)&&typeof t.acc==='string'}
+async function impFile(f){const e=$('#ie');e.textContent='';if(!f)return;let d;
+ try{d=JSON.parse(await f.text())}catch{return e.textContent='This file is not valid JSON. Nothing was changed.'}
+ if(!d||d.app!=='khata'||!Array.isArray(d.tx)||!d.cfg||!Array.isArray(d.cfg.accs))return e.textContent='This is not a Khata backup. Nothing was changed.';
+ const good=d.tx.filter(validTx),bad=d.tx.length-good.length,key=t=>[t.date,t.type,t.amt,t.cat,t.acc,t.note].join('|'),have=new Set(TX.map(key)),ids=new Set(TX.map(t=>t.id));
+ const fresh=good.filter(t=>!ids.has(t.id)&&!have.has(key(t))),dups=good.length-fresh.length;
+ const msg=`Backup has ${good.length} valid transactions${bad?` (${bad} invalid will be skipped)`:''}. ${dups} look like duplicates.\n\nOK = MERGE (add ${fresh.length} new, keep everything else)\nCancel = more options`;
+ if(confirm(msg)){await DB.putMany('tx',fresh);TX.push(...fresh);const a=new Set(CFG.accs.map(x=>x.id));d.cfg.accs.forEach(x=>{if(!a.has(x.id))CFG.accs.push(x)});['exp','inc'].forEach(k=>(d.cfg[k]||[]).forEach(c=>{if(!CFG[k].includes(c))CFG[k].push(c)}));Object.entries(d.cfg.budgets||{}).forEach(([k,v])=>{if(!CFG.budgets[k])CFG.budgets[k]=v});saveCfg();toast(`Merged ${fresh.length} transactions`);render();return}
+ if(confirm(`REPLACE all current data (${TX.length} transactions) with this backup (${good.length})?\nA backup of your current data will download first.`)){dl(`khata-before-restore-${today()}.json`,backupJSON(),'application/json');
+  await DB.clear('tx');await DB.putMany('tx',good);TX=good;CFG={...DEF_CFG(),...d.cfg};await saveCfg();toast('Restore complete');render()}else e.textContent='Import cancelled. Nothing was changed.'}
+async function wipe(){if(!confirm('This deletes ALL transactions, accounts and budgets on this device. Export a backup first. Continue?'))return;if(prompt('Type DELETE to confirm')!=='DELETE')return toast('Cancelled');
+ dl(`khata-before-clear-${today()}.json`,backupJSON(),'application/json');await DB.clear('tx');await DB.clear('kv');TX=[];CFG=DEF_CFG();await saveCfg();toast('All data cleared');render()}
+
+/* ===== start ===== */
+(async()=>{try{await DB.open();const k=(await DB.all('kv')).find(x=>x.k==='cfg');if(k)CFG={...DEF_CFG(),...k.v};else await saveCfg();TX=await DB.all('tx')}catch(e){dbOK=false}
+ if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});render()})();
+</script></body></html>
