@@ -79,6 +79,11 @@ function openForm(id,pre){const t=id?TX.find(x=>x.id===id):{type:pre||'expense',
 async function saveTx(e,id){e.preventDefault();if(S.busy)return false;const ty='expense';const amt=toMinor($('#am').value),err=m=>{$('#fe').textContent=m;return false};if(!amt)return err('Enter an amount greater than zero, like 2500 or 2500.50.');const t={id:id||uid(),type:ty,amt,date:today(),acc:CFG.defAcc,note:'',tags:''};S.busy=true;try{await DB.put('tx',t);if(id){}else TX.push(t);$('#dlg').close();toast('Saved');render()}catch(x){err('Could not save: '+(x&&x.message||x));}finally{S.busy=false;}return false;}
 async function delTx(id){const o=TX.find(x=>x.id===id);if(!o)return;TX=TX.filter(x=>x.id!==id);render();}
 
+/* expose methods on the JSDOM window object so tests and inline event handlers can invoke them */
+['go','openForm','saveTx','delTx','checkUpdate','setTy','addAcc','addCat','rmCat','saveBud','copyBud','range','expJSON','expCSV','goalNew','goalAdd','goalDel','editOpen','wipe','impFile','initSW'].forEach(name => {
+  if (typeof globalThis[name] === 'function') globalThis.window[name] = globalThis[name];
+});
+
 /* ===== start ===== */
 const APP_VERSION='2.0.0';let swReg=null;
 (async()=>{try{await DB.open();const r=await Core.loadOrInit(DB);CFG=r.cfg;TX=r.tx;}catch(e){DB.ok=false;STORAGE_ERR=e&&e.message||'Storage could not be opened.'}render();})();
