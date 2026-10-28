@@ -28,3 +28,7 @@ test('UI: closing and reopening the app keeps saved records (same storage, new p
   const idb = new IDBFactory(); let w = await boot(idb); await add(w, 'income', '1234.50'); w.close();
   w = await boot(idb); assert.equal(w.eval('TX.length'), 1); assert.match(w.document.body.textContent, /1,234\.50/); w.close();
 });
+test('UI: Menu has a Check for updates button and shows the version', async () => {
+  const w = await boot(); w.go('set'); const t = w.document.body.textContent;
+  assert.match(t, /Check for updates/); assert.match(t, /Version 2\.0\.0/); w.close();
+});

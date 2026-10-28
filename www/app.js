@@ -104,6 +104,7 @@ function vSet(){const b=balances();
  <label for="an">New account</label><div class="row"><input id="an" placeholder="Name"><input id="ao" inputmode="decimal" placeholder="Opening balance"></div><div class="row" style="margin-top:6px"><select id="ak"><option value="asset">Money I hold</option><option value="recv">Money owed to me</option></select><button onclick="addAcc()">Add account</button></div></div>
  <div class="card"><h3>Categories</h3><div class="row"><input id="cn" placeholder="New category name"><select id="ct"><option value="exp">Expense</option><option value="inc">Income</option></select><button class="f0" onclick="addCat()">Add</button></div><div class="mut" style="margin-top:6px">Tap to remove a custom category (existing transactions keep their label):</div><div>${[...CFG.exp.filter(c=>!DEF_EXP.includes(c)).map(c=>['exp',c]),...CFG.inc.filter(c=>!DEF_INC.includes(c)).map(c=>['inc',c])].map(([t,c])=>`<button class="s" onclick="rmCat('${t}',this.dataset.c)" data-c="${esc(c)}">${esc(c)} ✕</button> `).join('')||'<span class="mut">No custom categories.</span>'}</div></div>
  <div class="card"><h3>Backup &amp; restore</h3><div class="row"><button class="p" onclick="expJSON()">Export JSON</button><button onclick="expCSV()">Export CSV</button></div><label for="imp">Import JSON backup</label><input type="file" id="imp" accept=".json,application/json" onchange="impFile(this.files[0])"><div class="err" id="ie"></div></div>
+ <div class="card"><h3>App updates</h3><p class="mut">Version ${APP_VERSION}. The app checks for new versions when you open it. Updates download quietly and you choose when to apply them. Your records are never touched.</p><button class="p" onclick="checkUpdate()">Check for updates</button></div>
  <div class="card"><h3>Privacy &amp; storage</h3><p class="mut">All data stays on this device in your browser's IndexedDB; nothing is sent anywhere. This is not an encrypted vault: anyone with access to your phone or browser profile may read it. Clearing browser data, some "private" modes, or opening the file through certain file managers can lose or block storage. Back up often.</p><button class="d" onclick="wipe()">Clear all data…</button></div>`}
 function addAcc(){const n=$('#an').value.trim(),o=toMinor($('#ao').value||'0');if(!n||o===null)return toast('Enter a name and a valid opening balance');CFG.accs.push({id:uid(),name:n,kind:$('#ak').value,open:o});saveCfg();render()}
 function addCat(){const n=$('#cn').value.trim(),t=$('#ct').value;if(!n)return;if(CFG[t].includes(n))return toast('That category exists');CFG[t].push(n);saveCfg();render()}
@@ -176,11 +177,13 @@ async function wipe(){if(!confirm('This deletes ALL transactions, accounts, goal
  try{await dl(`khata-before-clear-${today()}.json`,backupJSON(),'application/json');const c=DEF_CFG();await DB.commit({clearTx:true,cfg:c});TX=[];CFG=c;toast('All data cleared');render()}catch(x){toast('Could not clear data: '+x.message)}}
 
 /* ===== start ===== */
+const APP_VERSION='2.0.0';let swReg=null;
 function initSW(){
  if(!('serviceWorker' in navigator))return;
  if(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform())return;
  const had=!!navigator.serviceWorker.controller;let reloading=false;
  navigator.serviceWorker.register('sw.js').then(reg=>{
+  swReg=reg;
   const show=()=>{$('#upd').hidden=false};
   if(reg.waiting&&navigator.serviceWorker.controller)show();
   reg.addEventListener('updatefound',()=>{const w=reg.installing;if(w)w.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)show()})});
@@ -193,3 +196,11 @@ function initSW(){
  catch(e){DB.ok=false;STORAGE_ERR=e&&e.message||'Storage could not be opened.'}
  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
  render();initSW()})();
+
+async function checkUpdate(){
+ if(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform())return toast('This APK only changes when you install a new APK. The installed web app updates itself.');
+ if(!swReg)return toast('Updates work in the installed web app. Open it from your home screen (https address).');
+ if(!navigator.onLine)return toast('No internet connection. Try again when you are online.');
+ try{toast('Checking for updates…');await swReg.update();
+  setTimeout(()=>{if(swReg.waiting){$('#upd').hidden=false;toast('A new version is ready. Tap Update now.')}else if(swReg.installing)toast('Downloading the update…');else toast('You have the latest version.')},1500)}
+ catch(e){toast('Could not check: '+e.message)}}
