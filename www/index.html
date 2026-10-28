@@ -8,7 +8,10 @@
 <link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
 <link rel="stylesheet" href="app.css"></head><body>
 <div id="app" aria-busy="true"><div class="card sk"></div><div class="card sk"></div><div class="card sk"></div></div>
-<div id="upd" class="banner np" role="status" hidden><span>A new version is ready.</span><button class="s p" id="updb">Update now</button></div>
+<div id="upd" class="sheet np" role="dialog" aria-modal="true" aria-labelledby="updT" hidden><div class="sheet-card">
+<h2 id="updT">New update available</h2><p id="updV" class="mut"></p><ul id="updN"></ul>
+<div id="updS" class="mut" role="status" aria-live="polite"></div>
+<div class="row"><button type="button" id="updL">Later</button><button type="button" class="p" id="updB">Update now</button></div></div></div>
 <div id="toast" role="status"></div><dialog id="dlg"></dialog>
 <script src="core.js"></script><script src="app.js"></script>
 </body></html>

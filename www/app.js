@@ -104,7 +104,7 @@ function vSet(){const b=balances();
  <label for="an">New account</label><div class="row"><input id="an" placeholder="Name"><input id="ao" inputmode="decimal" placeholder="Opening balance"></div><div class="row" style="margin-top:6px"><select id="ak"><option value="asset">Money I hold</option><option value="recv">Money owed to me</option></select><button onclick="addAcc()">Add account</button></div></div>
  <div class="card"><h3>Categories</h3><div class="row"><input id="cn" placeholder="New category name"><select id="ct"><option value="exp">Expense</option><option value="inc">Income</option></select><button class="f0" onclick="addCat()">Add</button></div><div class="mut" style="margin-top:6px">Tap to remove a custom category (existing transactions keep their label):</div><div>${[...CFG.exp.filter(c=>!DEF_EXP.includes(c)).map(c=>['exp',c]),...CFG.inc.filter(c=>!DEF_INC.includes(c)).map(c=>['inc',c])].map(([t,c])=>`<button class="s" onclick="rmCat('${t}',this.dataset.c)" data-c="${esc(c)}">${esc(c)} ✕</button> `).join('')||'<span class="mut">No custom categories.</span>'}</div></div>
  <div class="card"><h3>Backup &amp; restore</h3><div class="row"><button class="p" onclick="expJSON()">Export JSON</button><button onclick="expCSV()">Export CSV</button></div><label for="imp">Import JSON backup</label><input type="file" id="imp" accept=".json,application/json" onchange="impFile(this.files[0])"><div class="err" id="ie"></div></div>
- <div class="card"><h3>App updates</h3><p class="mut">Version ${APP_VERSION}. The app checks for new versions when you open it. Updates download quietly and you choose when to apply them. Your records are never touched.</p><button class="p" onclick="checkUpdate()">Check for updates</button></div>
+ <div class="card"><h3>App updates</h3><p class="mut">Version ${isDev()?'(dev build)':APP_VERSION}. The app checks for new versions when you open it. Updates download quietly and you choose when to apply them. Your records are never touched.</p><button class="p" onclick="checkUpdate()">Check for updates</button></div>
  <div class="card"><h3>Privacy &amp; storage</h3><p class="mut">All data stays on this device in your browser's IndexedDB; nothing is sent anywhere. This is not an encrypted vault: anyone with access to your phone or browser profile may read it. Clearing browser data, some "private" modes, or opening the file through certain file managers can lose or block storage. Back up often.</p><button class="d" onclick="wipe()">Clear all data…</button></div>`}
 function addAcc(){const n=$('#an').value.trim(),o=toMinor($('#ao').value||'0');if(!n||o===null)return toast('Enter a name and a valid opening balance');CFG.accs.push({id:uid(),name:n,kind:$('#ak').value,open:o});saveCfg();render()}
 function addCat(){const n=$('#cn').value.trim(),t=$('#ct').value;if(!n)return;if(CFG[t].includes(n))return toast('That category exists');CFG[t].push(n);saveCfg();render()}
@@ -177,30 +177,69 @@ async function wipe(){if(!confirm('This deletes ALL transactions, accounts, goal
  try{await dl(`khata-before-clear-${today()}.json`,backupJSON(),'application/json');const c=DEF_CFG();await DB.commit({clearTx:true,cfg:c});TX=[];CFG=c;toast('All data cleared');render()}catch(x){toast('Could not clear data: '+x.message)}}
 
 /* ===== start ===== */
-const APP_VERSION='2.0.0';let swReg=null;
+/* ===== updates (installed web app) =====
+   version.json (published by CI together with the new files) tells us the latest version.
+   "Update now" downloads the new service worker, waits until it is fully installed, then activates it and reloads once. */
+let APP_VERSION='__VERSION__';const isDev=()=>APP_VERSION.startsWith('__');
+let swReg=null,UPD_TIMEOUT=45000,updRel=null,updBusy=false,hadCtl=false;const memS={};
+const store={get(k){try{return localStorage.getItem(k)}catch{return memS[k]||null}},set(k,v){try{localStorage.setItem(k,v)}catch{memS[k]=v}}};
+const isApk=()=>!!(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform());
+function setUpd(msg,o={}){const s=$('#updS');s.textContent=msg;s.className=o.err?'err':'mut';$('#updB').disabled=!!o.busy;$('#updL').disabled=!!o.busy;$('#updB').textContent=o.retry?'Retry':'Update now';$('#upd').classList.toggle('busy',!!o.busy)}
+function showUpdate(rel){updRel=rel;const req=!!rel.minVersion&&Core.cmpVer(APP_VERSION,rel.minVersion)<0;
+ $('#updV').textContent=`Version ${rel.version} is available (you have ${APP_VERSION}).`;
+ const ul=$('#updN');ul.textContent='';rel.notes.forEach(n=>{const li=document.createElement('li');li.textContent=n;ul.appendChild(li)});
+ $('#updL').hidden=req;setUpd(req?'This update is required to keep the app working. Your records are not changed.':'Your records stay on this phone and are not changed.');
+ $('#upd').hidden=false;$('#updB').focus()}
+async function checkRelease(manual){
+ if(isDev())return manual?toast('Development build: update checks are off.'):0;
+ if(updBusy||(!manual&&!$('#upd').hidden))return;
+ try{const r=await fetch('version.json',{cache:'no-store'});if(!r.ok)throw new Error('HTTP '+r.status);
+  const t=await r.text();if(t.length>20000)throw new Error('Update information is too large');
+  const rel=Core.validateRelease(JSON.parse(t));if(!rel)throw new Error('Update information is invalid');
+  if(Core.cmpVer(rel.version,APP_VERSION)>0){
+   const req=rel.minVersion&&Core.cmpVer(APP_VERSION,rel.minVersion)<0;
+   if(manual||req||store.get('khata.later')!==rel.version)showUpdate(rel);
+   return 'newer'}
+  if(manual)toast(`You have the latest version (${APP_VERSION}).`)
+ }catch(e){if(manual)toast(navigator.onLine?'Could not check for updates: '+e.message:'You are offline. Try again when connected.')}}
+function waitForWaiting(reg,ms){return new Promise((res,rej)=>{
+ if(reg.waiting)return res(reg.waiting);
+ const t=setTimeout(()=>rej(new Error('The new version is not available yet. Wait a minute, then tap Retry.')),ms);
+ const watch=w=>w&&w.addEventListener('statechange',()=>{
+  if(w.state==='installed'){clearTimeout(t);res(reg.waiting||w)}
+  else if(w.state==='redundant'){clearTimeout(t);rej(new Error('The update could not be installed. Tap Retry.'))}});
+ watch(reg.installing);reg.addEventListener&&reg.addEventListener('updatefound',()=>watch(reg.installing))})}
+async function applyUpdate(){
+ if(updBusy)return;
+ if($('#dlg').open||S.busy)return setUpd('Finish or cancel the open entry first, then tap Update now.',{err:1});
+ if(isApk())return setUpd('This APK cannot update itself. Install the newer APK, or use the installed web app, which updates itself.',{err:1});
+ if(!navigator.onLine)return setUpd('You are offline. Connect to the internet, then tap Retry.',{err:1,retry:1});
+ if(!swReg)return setUpd('Updates work in the installed web app. Open it from your home screen.',{err:1});
+ updBusy=true;setUpd('Downloading the update…',{busy:1});
+ try{await swReg.update();const w=await waitForWaiting(swReg,UPD_TIMEOUT);
+  setUpd('Installing…',{busy:1});store.set('khata.later','');w.postMessage('SKIP_WAITING');
+  setTimeout(()=>{if(updBusy){updBusy=false;setUpd('The update did not finish. Close and reopen the app, then try again.',{err:1,retry:1})}},15000)}
+ catch(e){updBusy=false;setUpd(e.message||'Update failed.',{err:1,retry:1})}}
+function laterUpdate(){if(updRel)store.set('khata.later',updRel.version);$('#upd').hidden=true}
 function initSW(){
- if(!('serviceWorker' in navigator))return;
- if(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform())return;
- const had=!!navigator.serviceWorker.controller;let reloading=false;
+ $('#updB').onclick=applyUpdate;$('#updL').onclick=laterUpdate;
+ if(!('serviceWorker' in navigator)||isApk())return;
+ hadCtl=!!navigator.serviceWorker.controller;
  navigator.serviceWorker.register('sw.js').then(reg=>{
-  swReg=reg;
-  const show=()=>{$('#upd').hidden=false};
-  if(reg.waiting&&navigator.serviceWorker.controller)show();
-  reg.addEventListener('updatefound',()=>{const w=reg.installing;if(w)w.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)show()})});
-  $('#updb').onclick=()=>{if($('#dlg').open||S.busy)return toast('Finish or cancel the open entry first, then tap Update.');if(reg.waiting)reg.waiting.postMessage('SKIP_WAITING')};
-  const chk=()=>reg.update().catch(()=>{});document.addEventListener('visibilitychange',()=>{if(!document.hidden)chk()});setInterval(chk,3600000)
+  swReg=reg;const poll=()=>{reg.update().catch(()=>{});checkRelease(false)};
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)poll()});setInterval(poll,3600000);
+  reg.addEventListener('updatefound',()=>{const w=reg.installing;if(w)w.addEventListener('statechange',()=>{if(w.state==='installed'&&navigator.serviceWorker.controller)checkRelease(false)})})
  }).catch(()=>{});
- navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!had||reloading)return;reloading=true;location.reload()})}
+ navigator.serviceWorker.addEventListener('controllerchange',()=>{if(!hadCtl)return;let last=0;try{last=+sessionStorage.getItem('khata.rl')||0}catch{}
+  if(Date.now()-last<10000)return;try{sessionStorage.setItem('khata.rl',String(Date.now()))}catch{}location.reload()})}
+async function checkUpdate(){
+ if(isApk())return toast('This APK only changes when you install a new APK. The installed web app updates itself.');
+ if(!isDev()&&!swReg)return toast('Updates work in the installed web app. Open it from your home screen.');
+ if(swReg)swReg.update().catch(()=>{});
+ return checkRelease(true)}
 (async()=>{
  try{await DB.open();const r=await Core.loadOrInit(DB);CFG=r.cfg;TX=r.tx}
  catch(e){DB.ok=false;STORAGE_ERR=e&&e.message||'Storage could not be opened.'}
  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
- render();initSW()})();
+ render();initSW();checkRelease(false)})();
 
-async function checkUpdate(){
- if(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform())return toast('This APK only changes when you install a new APK. The installed web app updates itself.');
- if(!swReg)return toast('Updates work in the installed web app. Open it from your home screen (https address).');
- if(!navigator.onLine)return toast('No internet connection. Try again when you are online.');
- try{toast('Checking for updates…');await swReg.update();
-  setTimeout(()=>{if(swReg.waiting){$('#upd').hidden=false;toast('A new version is ready. Tap Update now.')}else if(swReg.installing)toast('Downloading the update…');else toast('You have the latest version.')},1500)}
- catch(e){toast('Could not check: '+e.message)}}

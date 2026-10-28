@@ -170,6 +170,22 @@ async function loadOrInit(D) {
   else { cfg = defaultCfg(); fresh = tx.length === 0; await D.put('kv', { k: 'cfg', v: cfg }); }
   return { cfg, tx, fresh };
 }
-const Core = { SCHEMA, DEF_EXP, DEF_INC, PAY, toMinor, validDate, defaultCfg, migrate, sumT, balances, byCat, monthSeries, cleanTx, cleanCfg, planImport, mergeCfg, toCsv, DB, loadOrInit };
+/* Update metadata (version.json) is untrusted input: strict shape, no markup, bounded sizes. */
+const VER = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
+function cmpVer(a, b) {
+  const p = s => String(s).split('.').map(Number), x = p(a), y = p(b);
+  for (let i = 0; i < 3; i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d > 0 ? 1 : -1; }
+  return 0;
+}
+function validateRelease(o) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+  if (typeof o.version !== 'string' || !VER.test(o.version)) return null;
+  if (o.minVersion != null && o.minVersion !== '' && (typeof o.minVersion !== 'string' || !VER.test(o.minVersion))) return null;
+  if (!Array.isArray(o.notes) || o.notes.length > 12 || o.notes.some(n => typeof n !== 'string' || n.length > 200)) return null;
+  if (o.date != null && o.date !== '' && !validDate(o.date)) return null;
+  if (o.build != null && o.build !== '' && !/^[0-9a-f]{7,40}$/.test(o.build)) return null;
+  return { version: o.version, minVersion: o.minVersion || '', notes: o.notes.slice(), date: o.date || '', build: o.build || '' };
+}
+const Core = { cmpVer, validateRelease, SCHEMA, DEF_EXP, DEF_INC, PAY, toMinor, validDate, defaultCfg, migrate, sumT, balances, byCat, monthSeries, cleanTx, cleanCfg, planImport, mergeCfg, toCsv, DB, loadOrInit };
 root.Core = Core; if (typeof module !== 'undefined') module.exports = Core;
 })(typeof self !== 'undefined' ? self : globalThis);

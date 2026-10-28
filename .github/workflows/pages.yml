@@ -33,11 +33,19 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      - name: Stamp release into the service worker
-        run: sed -i "s/__BUILD__/${GITHUB_SHA}/" www/sw.js
+      - name: Stamp version, build and release notes
+        run: node scripts/stamp.js
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
           path: www
       - id: deployment
         uses: actions/deploy-pages@v4
+      - name: Confirm the published version is live
+        run: |
+          V=$(node -p "require('./package.json').version")
+          for i in 1 2 3 4 5 6; do
+            if curl -fsS "${{ steps.deployment.outputs.page_url }}version.json?c=$RANDOM" | grep -q "\"version\": \"$V\""; then echo "Live: $V"; exit 0; fi
+            sleep 10
+          done
+          echo "Published version.json does not show $V"; exit 1

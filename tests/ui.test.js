@@ -30,5 +30,5 @@ test('UI: closing and reopening the app keeps saved records (same storage, new p
 });
 test('UI: Menu has a Check for updates button and shows the version', async () => {
   const w = await boot(); w.eval("go('set')"); const t = w.document.body.textContent;
-  assert.match(t, /Check for updates/); assert.match(t, /Version 2\.0\.0/); w.close();
+  assert.match(t, /Check for updates/); assert.match(t, /Version \(dev build\)/); w.close();
 });
