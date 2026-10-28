@@ -1,21 +1,27 @@
-name: Build APK
+name: Build Android APK (manual)
+# Only needed if you want an APK. The installable web app updates itself and does not need this.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+  push:
+    tags: ['v*']
+permissions:
+  contents: read
 jobs:
-  build:
+  apk:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
+          cache: npm
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: 17
-      - run: npm install
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
       - run: npx cap add android
       - run: npx cap sync android
       - run: chmod +x gradlew && ./gradlew assembleDebug
