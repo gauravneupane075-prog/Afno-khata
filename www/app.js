@@ -15,7 +15,7 @@ function toast(msg,undo){const t=$('#toast');t.innerHTML=esc(msg)+(undo?' <butto
 const DB=Core.DB;let STORAGE_ERR='';
 /* ===== state ===== */
 const DEF_EXP=Core.DEF_EXP,DEF_INC=Core.DEF_INC,PAY=Core.PAY,DEF_CFG=Core.defaultCfg;
-let CFG=DEF_CFG(),TX=[];
+let CFG=DEF_CFG(),TX=[],IMPORTS=[],REVIEW_KEY=null;
 const now=new Date();
 const S={view:'dash',y:now.getFullYear(),m:now.getMonth()+1,q:'',type:'all',page:1,lastDel:null,busy:false};
 const saveCfg=()=>DB.put('kv',{k:'cfg',v:CFG}).catch(()=>toast('Could not save settings'));
@@ -33,7 +33,7 @@ const monthSeries=y=>Core.monthSeries(TX,y);
 function render(){
  const th=CFG.theme==='auto'?(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'):CFG.theme;document.documentElement.dataset.t=th;
  const yrs=new Set([S.y,now.getFullYear(),...TX.map(t=>+t.date.slice(0,4))]);
- const V={dash:vDash,tx:vTx,bud:vBud,rep:vRep,set:vSet}[S.view]();
+ const V={dash:vDash,tx:vTx,bud:vBud,rep:vRep,set:vSet,auto:vAuto}[S.view]();
  $('#app').innerHTML=`${DB.ok?'':`<div class="banner" role="alert"><b>Storage problem.</b> ${esc(STORAGE_ERR||'Storage is unavailable.')} Nothing can be saved right now, and existing data has not been changed. Use a current browser at an https address (or the installed app) and keep a JSON backup.</div>`}
  <header class="np"><b>Khata</b><select id="ys" aria-label="Year" style="width:auto" onchange="S.y=+this.value;S.page=1;render()">${[...yrs].sort().map(y=>`<option ${y===S.y?'selected':''}>${y}</option>`)}</select>
  <select aria-label="Month" style="width:auto" onchange="S.m=+this.value;S.page=1;render()">${MN.map((n,i)=>`<option value="${i+1}" ${i+1===S.m?'selected':''}>${n}</option>`)}</select><button class="s" aria-label="Menu: accounts, categories, backup, settings" onclick="go('set')">☰</button></header>
@@ -52,6 +52,7 @@ function vDash(){
  return `<div class="card"><div class="mut">Money with me (${S.y} balances, all time)</div><div class="big">${fmt(have)}</div>
  <div class="row" style="margin-top:8px"><div><div class="mut">To receive</div><b>${fmt(recv)}</b></div><div><div class="mut">Total (with me + receivable)</div><b>${fmt(have+recv)}</b></div></div></div>
  <div class="row np" style="margin-bottom:12px"><button class="p" onclick="openForm(null,'expense')">− Add expense</button><button class="p" style="background:var(--inc);border-color:var(--inc)" onclick="openForm(null,'income')">+ Add income</button></div>
+ ${pendingRecs().length?`<div class="card np"><b>${pendingRecs().length} detected transaction${pendingRecs().length>1?'s':''} waiting</b><div class="mut">Check them before they are added.</div><button class="p" style="margin-top:6px" onclick="go('auto')">Review now</button></div>`:''}
  ${TX.length?'':`<div class="card"><h3>Add your first transaction</h3><p class="mut">Everything starts at zero. Set what you already hold under Menu → Accounts → Opening, then record income and expenses.</p><button class="p" onclick="openForm()">Add transaction</button></div>`}
  <div class="grid"><div class="card"><div class="mut">Income · ${MN[S.m-1]}</div><div class="big inc">${fmt(inc)}</div></div>
  <div class="card"><div class="mut">Expenses · ${MN[S.m-1]}</div><div class="big exp">${fmt(exp)}</div></div>
@@ -104,6 +105,7 @@ function vSet(){const b=balances();
  <label for="an">New account</label><div class="row"><input id="an" placeholder="Name"><input id="ao" inputmode="decimal" placeholder="Opening balance"></div><div class="row" style="margin-top:6px"><select id="ak"><option value="asset">Money I hold</option><option value="recv">Money owed to me</option></select><button onclick="addAcc()">Add account</button></div></div>
  <div class="card"><h3>Categories</h3><div class="row"><input id="cn" placeholder="New category name"><select id="ct"><option value="exp">Expense</option><option value="inc">Income</option></select><button class="f0" onclick="addCat()">Add</button></div><div class="mut" style="margin-top:6px">Tap to remove a custom category (existing transactions keep their label):</div><div>${[...CFG.exp.filter(c=>!DEF_EXP.includes(c)).map(c=>['exp',c]),...CFG.inc.filter(c=>!DEF_INC.includes(c)).map(c=>['inc',c])].map(([t,c])=>`<button class="s" onclick="rmCat('${t}',this.dataset.c)" data-c="${esc(c)}">${esc(c)} ✕</button> `).join('')||'<span class="mut">No custom categories.</span>'}</div></div>
  <div class="card"><h3>Backup &amp; restore</h3><div class="row"><button class="p" onclick="expJSON()">Export JSON</button><button onclick="expCSV()">Export CSV</button></div><label for="imp">Import JSON backup</label><input type="file" id="imp" accept=".json,application/json" onchange="impFile(this.files[0])"><div class="err" id="ie"></div></div>
+ <div class="card"><h3>Auto transaction detection</h3><p class="mut">Mode: ${CFG.auto.mode==='auto'?'save confident ones automatically':CFG.auto.mode==='manual'?'manual only':'review before saving'}. ${pendingRecs().length} waiting for review.</p><button class="p" onclick="go('auto')">Open</button></div>
  <div class="card"><h3>App updates</h3><p class="mut">Version ${isDev()?'(dev build)':APP_VERSION}. The app checks for new versions when you open it. Updates download quietly and you choose when to apply them. Your records are never touched.</p><button class="p" onclick="checkUpdate()">Check for updates</button></div>
  <div class="card"><h3>Privacy &amp; storage</h3><p class="mut">All data stays on this device in your browser's IndexedDB; nothing is sent anywhere. This is not an encrypted vault: anyone with access to your phone or browser profile may read it. Clearing browser data, some "private" modes, or opening the file through certain file managers can lose or block storage. Back up often.</p><button class="d" onclick="wipe()">Clear all data…</button></div>`}
 function addAcc(){const n=$('#an').value.trim(),o=toMinor($('#ao').value||'0');if(!n||o===null)return toast('Enter a name and a valid opening balance');CFG.accs.push({id:uid(),name:n,kind:$('#ak').value,open:o});saveCfg();render()}
@@ -111,13 +113,13 @@ function addCat(){const n=$('#cn').value.trim(),t=$('#ct').value;if(!n)return;if
 function rmCat(t,c){if(confirm(`Remove category "${c}"?`)){CFG[t]=CFG[t].filter(x=>x!==c);saveCfg();render()}}
 
 /* ===== transaction form ===== */
-function openForm(id,pre){const t=id?TX.find(x=>x.id===id):{type:pre||'expense',date:today(),acc:CFG.defAcc,pay:'Cash'};
+function openForm(id,pre){const po=pre&&typeof pre==='object'?pre:null;REVIEW_KEY=po?po.importKey:null;const t=id?TX.find(x=>x.id===id):{type:po?po.type:(pre||'expense'),date:today(),acc:CFG.defAcc,pay:'Cash',...(po?{amt:po.amt,date:po.date,acc:po.acc||'',cat:po.cat,party:po.party,note:po.note}:{})};
  const d=$('#dlg');d.innerHTML=`<form id="f" onsubmit="return saveTx(event,'${id||''}')" novalidate><h2>${id?'Edit':'Add'} transaction</h2>
  <div class="seg" role="group" aria-label="Type">${['expense','income','transfer'].map(x=>`<button type="button" data-ty="${x}" class="${t.type===x?'on':''}" onclick="setTy('${x}')">${x[0].toUpperCase()+x.slice(1)}</button>`).join('')}</div><input type="hidden" id="ty" value="${t.type}">
  <label for="am">Amount (${esc(CFG.cur)})</label><input id="am" inputmode="decimal" autocomplete="off" value="${t.amt?(t.amt/100).toFixed(2):''}" placeholder="0.00">
  <div id="catw"></div>
  <label for="dt">Date</label><input id="dt" type="date" value="${t.date}">
- <label for="ac" id="aclab">Account</label><select id="ac">${CFG.accs.map(a=>`<option value="${a.id}" ${t.acc===a.id?'selected':''}>${esc(a.name)}</option>`)}</select>
+ <label for="ac" id="aclab">Account</label><select id="ac">${t.acc===''?'<option value="">Choose account…</option>':''}${CFG.accs.map(a=>`<option value="${a.id}" ${t.acc===a.id?'selected':''}>${esc(a.name)}</option>`)}</select>
  <div id="tow" hidden><label for="to">To account</label><select id="to">${CFG.accs.map(a=>`<option value="${a.id}" ${t.to===a.id?'selected':''}>${esc(a.name)}</option>`)}</select></div>
  <div id="opt"><label for="pm">Payment method</label><select id="pm">${PAY.map(p=>`<option ${t.pay===p?'selected':''}>${p}</option>`)}</select>
  <label for="pt">Merchant / person / source (optional)</label><input id="pt" value="${esc(t.party||'')}"></div>
@@ -132,11 +134,14 @@ function setTy(x){$('#ty').value=x;document.querySelectorAll('[data-ty]').forEac
 async function saveTx(e,id){e.preventDefault();if(S.busy)return false;const ty=$('#ty').value,amt=toMinor($('#am').value),dt=$('#dt').value,err=m=>{$('#fe').textContent=m;return false};
  if(!amt)return err('Enter an amount greater than zero, like 2500 or 2500.50.');
  if(!/^\d{4}-\d{2}-\d{2}$/.test(dt)||!Core.validDate(dt))return err('Choose a valid date.');
- const ac=$('#ac').value;if(ty==='transfer'&&ac===$('#to').value)return err('Choose two different accounts for a transfer.');
+ const ac=$('#ac').value;if(!ac)return err('Choose an account.');if(ty==='transfer'&&ac===$('#to').value)return err('Choose two different accounts for a transfer.');
  const old=id?TX.find(x=>x.id===id):null;
  const t={id:id||uid(),type:ty,amt,date:dt,acc:ac,note:$('#nt').value.trim(),tags:$('#tg').value.trim()};
  if(ty==='transfer')t.to=$('#to').value;else{t.cat=$('#ct2').value;t.pay=$('#pm').value;t.party=$('#pt').value.trim()}
- S.busy=true;try{await DB.put('tx',t);if(old)Object.assign(old,t);else TX.push(t);$('#dlg').close();const[y,m]=dt.split('-');S.y=+y;S.m=+m;toast('Saved');render()}catch(x){err('Could not save: '+x.message)}finally{S.busy=false}return false}
+ S.busy=true;try{const rk=REVIEW_KEY,rec=rk&&IMPORTS.find(x=>x.key===rk);
+  if(rec){const n={...rec,status:'saved',txId:t.id,text:'',parsed:{...rec.parsed,amt:t.amt,type:t.type,date:t.date,acc:t.acc}};await DB.commit({putTx:[t],putImports:[n]});IMPORTS=IMPORTS.map(x=>x.key===rk?n:x);REVIEW_KEY=null}
+  else await DB.put('tx',t);
+  if(old)Object.assign(old,t);else TX.push(t);$('#dlg').close();const[y,m]=dt.split('-');S.y=+y;S.m=+m;toast('Saved');render()}catch(x){err('Could not save: '+x.message)}finally{S.busy=false}return false}
 async function dup(id){try{const o=TX.find(x=>x.id===id),t={...o,id:uid(),date:today()};await DB.put('tx',t);TX.push(t);toast("Duplicated with today's date");render()}catch(x){toast('Could not duplicate: '+x.message)}}
 async function delTx(id){if(!confirm('Delete this transaction?'))return;const o=TX.find(x=>x.id===id);try{await DB.del('tx',id);TX=TX.filter(x=>x.id!==id);render();toast('Deleted',async()=>{try{await DB.put('tx',o);TX.push(o);render()}catch(x){toast('Undo failed: '+x.message)}})}catch(x){toast('Could not delete: '+x.message)}}
 
@@ -148,7 +153,7 @@ async function dl(name,text,type){
    await SH.share({title:name,url:r.uri,dialogTitle:'Save or send backup'});return}
   catch(e){toast('Could not export: '+(e.message||e));return}}
  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove()},1000)}
-function backupJSON(){return JSON.stringify({app:'khata',version:2,exported:new Date().toISOString(),cfg:CFG,tx:TX},null,1)}
+function backupJSON(){return JSON.stringify({app:'khata',version:3,exported:new Date().toISOString(),cfg:CFG,tx:TX,imports:IMPORTS.map(r=>({...r,text:''}))},null,1)}
 function expJSON(){dl(`khata-backup-${today()}.json`,backupJSON(),'application/json');CFG.lastBackup=Date.now();saveCfg();toast('Backup downloaded');render()}
 /* ===== savings goals (kept separate from expenses) ===== */
 function goalsHTML(){const g=CFG.goals;return `<div class="card"><h3>Savings goals</h3><p class="mut">Goals are tracked separately. Money added to a goal is not counted as an expense.</p>${g.map(x=>{const p=x.target?Math.min(100,Math.round(x.saved*100/x.target)):0;return `<div style="margin:10px 0"><div class="row"><b>${esc(x.name)}</b><span class="f0">${p}%</span></div><div class="bar"><i style="width:${p}%"></i></div><div class="mut">${fmt(x.saved)} of ${fmt(x.target)} · ${fmt(Math.max(0,x.target-x.saved))} left${x.date?' · by '+esc(x.date):''}</div><button class="s" onclick="goalAdd('${x.id}')">Add or remove money</button> <button class="s d" onclick="goalDel('${x.id}')">Delete</button></div>`}).join('')||'<p class="mut">No goals yet.</p>'}<label for="gn">New goal</label><input id="gn" placeholder="e.g. Emergency fund" maxlength="60"><div class="row" style="margin-top:6px"><input id="gt" inputmode="decimal" placeholder="Target" aria-label="Target amount"><input id="gs" inputmode="decimal" placeholder="Saved so far" aria-label="Saved so far"></div><label for="gd">Target date (optional)</label><input id="gd" type="date"><div class="err" id="ge" role="alert"></div><button class="p" onclick="goalNew()" style="margin-top:6px">Add goal</button></div>`}
@@ -162,21 +167,80 @@ async function impFile(f){const e=$('#ie');e.textContent='';if(!f)return;
  if(f.size>MAX_BYTES)return e.textContent='This file is larger than 10 MB. Nothing was changed.';
  if(!/\.json$/i.test(f.name))return e.textContent='Choose a .json backup file. Nothing was changed.';
  let d;try{d=JSON.parse(await f.text())}catch{return e.textContent='This file is not valid JSON. Nothing was changed.'}
- const p=Core.planImport(CFG,TX,d);if(!p.ok)return e.textContent=p.error+' Nothing was changed.';
+ const p=Core.planImport(CFG,TX,d,IMPORTS);if(!p.ok)return e.textContent=p.error+' Nothing was changed.';
  const msg=`Backup has ${p.good.length} valid transactions${p.bad?` (${p.bad} invalid will be skipped)`:''}. ${p.dups} look like duplicates.\n\nOK = MERGE (add ${p.fresh.length} new, keep everything else)\nCancel = more options`;
  try{
-  if(confirm(msg)){const cfg=Core.mergeCfg(CFG,p.cfg);await DB.commit({putTx:p.fresh,cfg});TX.push(...p.fresh);CFG=cfg;toast(`Merged ${p.fresh.length} transactions`);render();return}
+  if(confirm(msg)){const cfg=Core.mergeCfg(CFG,p.cfg);await DB.commit({putTx:p.fresh,putImports:p.newImports,cfg});TX.push(...p.fresh);IMPORTS.push(...p.newImports);CFG=cfg;toast(`Merged ${p.fresh.length} transactions`);render();return}
   if(confirm(`REPLACE all current data (${TX.length} transactions) with this backup (${p.good.length})?\nA safety backup of your current data downloads first.`)){
    await dl(`khata-before-restore-${today()}.json`,backupJSON(),'application/json');
-   await DB.commit({clearTx:true,putTx:p.good,cfg:p.cfg});
+   await DB.commit({clearTx:true,clearImports:true,putTx:p.good,putImports:p.imports,cfg:p.cfg});
    const n=(await DB.all('tx')).length;if(n!==p.good.length)throw new Error(`Verification failed (${n} of ${p.good.length} records stored)`);
-   TX=p.good;CFG=p.cfg;toast('Restore complete');render()}
+   TX=p.good;IMPORTS=p.imports;CFG=p.cfg;toast('Restore complete');render()}
   else e.textContent='Import cancelled. Nothing was changed.'
  }catch(x){e.textContent='Import failed and was rolled back: '+x.message}}
 async function wipe(){if(!confirm('This deletes ALL transactions, accounts, goals and budgets on this device. Export a backup first. Continue?'))return;if(prompt('Type DELETE to confirm')!=='DELETE')return toast('Cancelled');
- try{await dl(`khata-before-clear-${today()}.json`,backupJSON(),'application/json');const c=DEF_CFG();await DB.commit({clearTx:true,cfg:c});TX=[];CFG=c;toast('All data cleared');render()}catch(x){toast('Could not clear data: '+x.message)}}
+ try{await dl(`khata-before-clear-${today()}.json`,backupJSON(),'application/json');const c=DEF_CFG();await DB.commit({clearTx:true,clearImports:true,cfg:c});TX=[];IMPORTS=[];CFG=c;toast('All data cleared');render()}catch(x){toast('Could not clear data: '+x.message)}}
 
 /* ===== start ===== */
+/* ===== auto transaction detection (UI + glue; parsing lives in sms.js) ===== */
+const SAMPLES=[['Debit',"Dear Customer, Rs. 1,500.00 has been debited from your account on 29 Oct 2026. Ref No: TX123456",'NABIL'],['Credit',"You have received Rs. 2,000 from Ram. Txn ID 998877",'eSewa'],['Refund',"Refund of Rs 800 has been credited to your account. Ref 424242",'Khalti'],['OTP (ignored)',"Your OTP is 123456 for payment of Rs 500. Do not share.",'NABIL'],['Failed (ignored)',"Transaction of Rs 500 failed. Amount not debited.",'EBL'],['Nepali',"तपाईंको खाताबाट रु. १,५०० निकालिएको छ। Ref 123456",'Nabil']];
+const AUTO={draft:'',sender:'',note:'',preview:null};const IGN={otp:'an OTP',failed:'a failed payment',pending:'a pending payment',reminder:'a payment reminder',promotional:'a promotion','no-direction':'not a debit or credit','no-amount':'no amount found',empty:'empty'};
+let nativePlugin=null;const nativeOn=()=>isApk()&&CFG.auto.mode!=='manual'&&!CFG.auto.paused;
+const plug=()=>nativePlugin||(isApk()?(nativePlugin=Capacitor.registerPlugin('KhataSms')):null);
+const pendingRecs=()=>IMPORTS.filter(r=>r.status==='pending').sort((a,b)=>b.at-a.at);
+const flagTxt=f=>({'direction-ambiguous':'Could not tell debit from credit','multiple-amounts':'Several amounts found','link':'Contains a link (be careful)','date-ambiguous':'Date format unclear','date-future':'Date is in the future','date-invalid':'Date is invalid'}[f]||f);
+async function processIncoming(msg){
+ const ctx={imports:new Map(IMPORTS.map(r=>[r.key,r])),accs:CFG.accs,mode:CFG.auto.mode==='auto'?'auto':'review',minConf:CFG.auto.minConf};
+ const r=Sms.processMessage(msg,ctx);
+ if(r.outcome==='saved'){await DB.commit({putTx:[r.tx],putImports:[r.rec]});TX.push(r.tx);IMPORTS.push(r.rec)}
+ else if(r.outcome==='pending'){await DB.commit({putImports:[r.rec]});IMPORTS=IMPORTS.filter(x=>x.key!==r.rec.key);IMPORTS.push(r.rec)}
+ return r}
+function accOpts(sel){return `<option value="">Choose account…</option>`+CFG.accs.filter(a=>a.kind==='asset').map(a=>`<option value="${esc(a.id)}" ${a.id===sel?'selected':''}>${esc(a.name)}</option>`).join('')}
+function recCard(r,hist){const p=r.parsed,tag=p.type==='income'?'inc':p.type==='expense'?'exp':'warn';
+ return `<div class="tx"><div style="flex:1"><b class="${tag}">${p.type?(p.type==='income'?'+':'−'):'?'}${fmt(p.amt)}</b> <span class="mut">${esc(p.date)}${p.party?' · '+esc(p.party):''}${p.acc?' · '+esc(accName(p.acc)):''}${p.refund?' · refund':''}</span>
+ <div class="mut">${esc(r.src)} · ${Math.round(r.conf*100)}% sure${r.status==='pending'&&!p.acc?' · choose an account':''}</div>${(r.flags||[]).map(f=>`<div class="warn">${esc(flagTxt(f))}</div>`).join('')}</div>
+ <div style="text-align:right">${r.status==='pending'?`<button class="s p" data-k="${esc(r.key)}" onclick="reviewRec(this.dataset.k)">Review</button> <button class="s d" data-k="${esc(r.key)}" onclick="rejectRec(this.dataset.k)">Reject</button>`
+ :r.status==='saved'&&TX.some(t=>t.id===r.txId)?`<button class="s d" data-k="${esc(r.key)}" onclick="removeAuto(this.dataset.k)">Remove entry</button>`:`<span class="mut">${esc(r.status)}</span>`}</div></div>`}
+function vAuto(){const a=CFG.auto,pend=pendingRecs(),hist=IMPORTS.filter(r=>r.status!=='pending').sort((x,y)=>y.at-x.at).slice(0,30),pv=AUTO.preview;
+ const pvH=pv?(pv.kind==='ignored'?`<div class="card"><b>Ignored</b><div class="mut">This looks like ${esc(IGN[pv.reason]||pv.reason)}, so nothing would be recorded.</div></div>`
+  :`<div class="card"><b>Detected</b><div class="big ${pv.type==='income'?'inc':'exp'}">${pv.type==='income'?'+':pv.type==='expense'?'−':'?'}${fmt(pv.amt)}</div><div class="mut">${esc(pv.date)}${pv.party?' · '+esc(pv.party):''}${pv.bank?' · '+esc(pv.bank):''}${pv.ref?' · ref '+esc(pv.ref):''} · ${Math.round(pv.conf*100)}% sure</div>${pv.flags.map(f=>`<div class="warn">${esc(flagTxt(f))}</div>`).join('')}</div>`):'';
+ return `<h2>Auto transaction detection</h2>
+ <div class="card"><h3>How it saves</h3>${[['review','Review before saving (recommended)'],['auto','Save confident ones automatically'],['manual','Manual only: detect nothing in the background']].map(([v,l])=>`<label style="display:flex;gap:10px;align-items:center;font-weight:400"><input type="radio" name="am" style="width:auto;min-height:0" value="${v}" ${a.mode===v?'checked':''} onchange="setAutoMode(this.value)"> ${l}</label>`).join('')}
+ <p class="mut">Automatic saving only applies to messages from known banks and wallets that match exactly one of your accounts, with no warnings. Everything else waits for your review.</p></div>
+ <div class="card"><h3>Phone notifications</h3>${isApk()?`<p class="mut" id="nstat">Checking access…</p><p class="mut">If Android shows a "Restricted setting" message, open Android Settings → Apps → Khata → ⋮ → <b>Allow restricted settings</b>, then try again.</p><div class="row"><button class="p" onclick="openNotifSettings()">Open notification access</button><button onclick="togglePause()">${a.paused?'Resume detection':'Pause detection'}</button></div>`
+  :`<p class="mut">Reading messages automatically needs the Android APK app, because a web app cannot see other apps' notifications. In the web app, paste or share a message below.</p>`}
+ <p class="mut"><b>What is accessed:</b> only notification text that contains an amount and a debit/credit word. OTPs and promotions are dropped. Nothing is uploaded. Original text is kept only while an item waits for review, and is deleted once you save or reject it.</p></div>
+ <div class="card"><h3>Paste a message</h3><label for="ad">Message text</label><textarea id="ad" rows="4" maxlength="1000" oninput="AUTO.draft=this.value">${esc(AUTO.draft)}</textarea>
+ <label for="as">Sender (optional, e.g. NABIL)</label><input id="as" maxlength="40" value="${esc(AUTO.sender)}" oninput="AUTO.sender=this.value">
+ <div class="row" style="margin-top:8px"><button onclick="autoPreview()">Preview only</button><button class="p" onclick="autoImport()">Detect &amp; add</button></div><div class="err" id="ae" role="alert"></div>${pvH}
+ <div class="mut" style="margin-top:8px">Try a sample (no real data):</div><div>${SAMPLES.map((s,i)=>`<button class="s" onclick="useSample(${i})">${esc(s[0])}</button> `).join('')}</div></div>
+ <div class="card"><h3>Waiting for review (${pend.length})</h3>${pend.map(r=>recCard(r)).join('')||'<p class="mut">Nothing waiting.</p>'}</div>
+ <div class="card"><h3>Imported history</h3>${hist.map(r=>recCard(r,1)).join('')||'<p class="mut">No imports yet.</p>'}
+ <button class="d" style="margin-top:8px" onclick="clearImports()">Delete imported message data</button><p class="mut">This removes the detection history and duplicate memory only. Your transactions are not touched.</p></div>`}
+function setAutoMode(v){CFG.auto.mode=v;saveCfg();render()}
+async function togglePause(){CFG.auto.paused=!CFG.auto.paused;try{await plug().setPaused({paused:CFG.auto.paused})}catch{}saveCfg();render()}
+async function openNotifSettings(){try{await plug().openSettings()}catch(e){toast('Could not open settings: '+e.message)}}
+async function refreshNative(){const el=$('#nstat');if(!el||!isApk())return;try{const s=await plug().status();el.textContent=s.enabled?(CFG.auto.paused||CFG.auto.mode==='manual'?'Access is on, but detection is paused.':'Notification access is on. Detection is active.'):'Notification access is off. Tap the button and allow Khata.'}catch{el.textContent='Notification reader is not available in this build.'}}
+function autoPreview(){const t=AUTO.draft.trim();if(!t)return $('#ae').textContent='Paste a message first.';AUTO.preview=Sms.parseSms(t,{sender:AUTO.sender,now:Date.now()});render()}
+async function autoImport(){const t=AUTO.draft.trim();if(!t)return $('#ae').textContent='Paste a message first.';
+ try{const r=await processIncoming({text:t,sender:AUTO.sender.trim(),at:Date.now(),src:'paste'});AUTO.preview=null;
+  if(r.outcome==='duplicate'){if(confirm('This message was already imported. Import it again as a separate entry?')){await processIncoming({text:t,sender:AUTO.sender.trim(),at:Date.now(),src:'paste',force:true});toast('Added for review')}}
+  else if(r.outcome==='ignored')toast('Ignored: '+(IGN[r.reason]||r.reason));else toast(r.outcome==='saved'?'Saved to Khata':'Added to the review list');
+  AUTO.draft='';render()}catch(e){$('#ae').textContent='Could not save: '+e.message}}
+function useSample(i){AUTO.draft=SAMPLES[i][1];AUTO.sender=SAMPLES[i][2];AUTO.preview=Sms.parseSms(AUTO.draft,{sender:AUTO.sender,now:Date.now()});render()}
+function reviewRec(k){const r=IMPORTS.find(x=>x.key===k);if(!r)return;const p=r.parsed;openForm(null,{type:p.type||'expense',amt:p.amt,date:p.date||today(),acc:p.acc||'',cat:p.refund?'Refunds & reimbursements':'',party:p.party,note:'',importKey:k})}
+async function rejectRec(k){const r=IMPORTS.find(x=>x.key===k);if(!r||!confirm('Reject this detected transaction? Nothing will be added to Khata.'))return;
+ try{const n={...r,status:'rejected',text:''};await DB.commit({putImports:[n]});IMPORTS=IMPORTS.map(x=>x.key===k?n:x);render()}catch(e){toast('Could not reject: '+e.message)}}
+async function removeAuto(k){const r=IMPORTS.find(x=>x.key===k);if(!r||!confirm('Remove the transaction that was created from this message?'))return;
+ try{const n={...r,status:'rejected',txId:'',text:''};await DB.commit({delTx:[r.txId],putImports:[n]});TX=TX.filter(t=>t.id!==r.txId);IMPORTS=IMPORTS.map(x=>x.key===k?n:x);render();toast('Entry removed')}catch(e){toast('Could not remove: '+e.message)}}
+async function clearImports(){if(!confirm('Delete all detection history and duplicate memory? Your transactions stay.'))return;try{await DB.commit({clearImports:true});IMPORTS=[];render();toast('Deleted')}catch(e){toast('Could not delete: '+e.message)}}
+let draining=false;
+async function drainNative(){if(!nativeOn()||draining||!DB.ok)return;draining=true;
+ try{const {events}=await plug().drain();const done=[];
+  for(const ev of events||[]){try{await processIncoming({text:String(ev.text||''),sender:String(ev.sender||''),id:String(ev.id||''),at:+ev.at||Date.now(),src:'notification'});done.push(ev.id)}catch{break}}
+  if(done.length)await plug().ack({ids:done});if(done.length&&['auto','dash'].includes(S.view))render()}catch{}finally{draining=false}}
+function startNative(){if(!isApk())return;const go2=()=>{drainNative();refreshNative()};go2();setInterval(go2,8000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)go2()})}
+
 /* ===== updates (installed web app) =====
    version.json (published by CI together with the new files) tells us the latest version.
    "Update now" downloads the new service worker, waits until it is fully installed, then activates it and reloads once. */
@@ -238,8 +302,8 @@ async function checkUpdate(){
  if(swReg)swReg.update().catch(()=>{});
  return checkRelease(true)}
 (async()=>{
- try{await DB.open();const r=await Core.loadOrInit(DB);CFG=r.cfg;TX=r.tx}
+ try{await DB.open();const r=await Core.loadOrInit(DB);CFG=r.cfg;TX=r.tx;IMPORTS=r.imports}
  catch(e){DB.ok=false;STORAGE_ERR=e&&e.message||'Storage could not be opened.'}
  if(navigator.storage&&navigator.storage.persist)navigator.storage.persist().catch(()=>{});
- render();initSW();checkRelease(false)})();
+ render();initSW();checkRelease(false);startNative()})();
 

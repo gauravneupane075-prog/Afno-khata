@@ -3,7 +3,7 @@
    so a release is never half-applied. Only the app's own static files are cached, never exports or data. */
 const BUILD = '__BUILD__';
 const CACHE = 'khata-' + BUILD;
-const ASSETS = ['./', 'index.html', 'app.css', 'core.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
+const ASSETS = ['./', 'index.html', 'app.css', 'core.js', 'sms.js', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => Promise.all(ASSETS.map(u => c.add(new Request(u, { cache: 'reload' }))))));
 });

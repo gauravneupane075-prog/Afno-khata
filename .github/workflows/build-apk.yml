@@ -24,6 +24,7 @@ jobs:
       - run: npm test
       - run: node scripts/stamp.js
       - run: npx cap add android
+      - run: node scripts/android-native.js
       - run: npx cap sync android
       - run: chmod +x gradlew && ./gradlew assembleDebug
         working-directory: android

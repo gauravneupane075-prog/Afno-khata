@@ -2,7 +2,7 @@
    No DOM access here, so it can be unit-tested in Node. */
 (function (root) {
 'use strict';
-const SCHEMA = 2, MAX_TX = 200000;
+const SCHEMA = 3, MAX_TX = 200000, MAX_IMPORTS = 20000;
 const pad = n => String(n).padStart(2, '0');
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 const DEF_EXP = ['Food & groceries','Rent & housing','Electricity & utilities','Internet & phone','Transport & fuel','Health & medicine','Education','Shopping & clothing','Entertainment','Family expenses','Travel','Personal care','Debt payments','Subscriptions','Gifts & donations','Other expenses'];
@@ -23,10 +23,11 @@ function validDate(s) {
   return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
 }
 
+const defaultAuto = () => ({ mode: 'review', minConf: 0.85, paused: false });
 /* A brand-new install starts with zero balances and no transactions. */
 function defaultCfg() {
   return { schema: SCHEMA, cur: 'रु', theme: 'auto', warn: 80, defAcc: 'cash', weekStart: 0, lastBackup: null,
-    exp: [...DEF_EXP], inc: [...DEF_INC], budgets: {}, goals: [],
+    exp: [...DEF_EXP], inc: [...DEF_INC], budgets: {}, goals: [], auto: defaultAuto(),
     accs: [
       { id: 'cash', name: 'Cash', kind: 'asset', open: 0 },
       { id: 'bank', name: 'Bank account', kind: 'asset', open: 0 },
@@ -34,7 +35,7 @@ function defaultCfg() {
       { id: 'savings', name: 'Savings account', kind: 'asset', open: 0 }] };
 }
 /* Upgrade an older stored config in place of resetting it. Existing values always win. */
-const STEPS = { 2: c => { if (!Array.isArray(c.goals)) c.goals = []; } };
+const STEPS = { 2: c => { if (!Array.isArray(c.goals)) c.goals = []; }, 3: c => { c.auto = { ...defaultAuto(), ...(c.auto && typeof c.auto === 'object' ? c.auto : {}) }; } };
 function migrate(old) {
   const d = defaultCfg(), c = { ...d, ...old };
   if (!Array.isArray(c.accs) || !c.accs.length) c.accs = d.accs;
@@ -102,9 +103,23 @@ function cleanCfg(c) {
     warn: Number.isInteger(c.warn) && c.warn >= 1 && c.warn <= 100 ? c.warn : 80,
     defAcc: accs.some(a => a.id === c.defAcc) ? c.defAcc : accs[0].id,
     lastBackup: Number.isFinite(c.lastBackup) ? c.lastBackup : null,
-    exp: strs(c.exp) || d.exp, inc: strs(c.inc) || d.inc, budgets, goals, accs };
+    exp: strs(c.exp) || d.exp, inc: strs(c.inc) || d.inc, budgets, goals, accs, auto: cleanAuto(c.auto) };
 }
-function planImport(curCfg, curTx, data) {
+function cleanAuto(a) {
+  const d = defaultAuto(); if (!a || typeof a !== 'object') return d;
+  return { mode: ['review', 'auto', 'manual'].includes(a.mode) ? a.mode : d.mode, minConf: typeof a.minConf === 'number' && a.minConf >= 0.7 && a.minConf <= 0.99 ? a.minConf : d.minConf, paused: a.paused === true };
+}
+/* Imported-message records (metadata for duplicate protection and review). Text is never restored from a backup. */
+function cleanImport(r) {
+  if (!r || typeof r !== 'object' || typeof r.key !== 'string' || !r.key || r.key.length > 160) return null;
+  if (!['pending', 'saved', 'rejected'].includes(r.status)) return null;
+  const p = r.parsed && typeof r.parsed === 'object' ? r.parsed : {}, s = (v, n) => typeof v === 'string' ? v.slice(0, n) : '';
+  if (r.status === 'pending' && !(Number.isInteger(p.amt) && p.amt > 0)) return null;
+  return { key: r.key, ref: s(r.ref, 30), sender: s(r.sender, 40), src: ['paste', 'notification', 'demo'].includes(r.src) ? r.src : 'paste', conf: typeof r.conf === 'number' ? Math.max(0, Math.min(1, r.conf)) : 0,
+    at: Number.isFinite(r.at) ? r.at : 0, status: r.status, txId: s(r.txId, 40), text: '', flags: Array.isArray(r.flags) ? r.flags.filter(x => typeof x === 'string').slice(0, 8).map(x => x.slice(0, 30)) : [],
+    parsed: { type: ['income', 'expense'].includes(p.type) ? p.type : '', amt: Number.isInteger(p.amt) && p.amt > 0 && p.amt <= 1e13 ? p.amt : 0, date: validDate(p.date || '') ? p.date : '', party: s(p.party, 40), bank: s(p.bank, 30), acc: s(p.acc, 40), refund: p.refund === true } };
+}
+function planImport(curCfg, curTx, data, curImports = []) {
   if (!data || typeof data !== 'object' || data.app !== 'khata' || !Array.isArray(data.tx)) return { ok: false, error: 'This is not a Khata backup.' };
   if (!Number.isInteger(data.version) || data.version < 1 || data.version > SCHEMA) return { ok: false, error: 'This backup version is not supported.' };
   if (data.tx.length > MAX_TX) return { ok: false, error: 'This backup has too many records.' };
@@ -116,7 +131,9 @@ function planImport(curCfg, curTx, data) {
   const have = new Set(curTx.map(key)), haveId = new Set(curTx.map(t => t.id));
   const seen = new Set(), fresh = [];
   good.forEach(t => { if (!haveId.has(t.id) && !have.has(key(t)) && !seen.has(t.id)) { seen.add(t.id); fresh.push(t); } });
-  return { ok: true, cfg, good, bad: data.tx.length - good.length, fresh, dups: good.length - fresh.length };
+  const imports = (Array.isArray(data.imports) ? data.imports : []).slice(0, MAX_IMPORTS).map(cleanImport).filter(Boolean);
+  const haveKeys = new Set(curImports.map(r => r.key)), newImports = imports.filter(r => !haveKeys.has(r.key));
+  return { ok: true, cfg, good, bad: data.tx.length - good.length, fresh, dups: good.length - fresh.length, imports, newImports };
 }
 function mergeCfg(cur, inc) {
   const c = JSON.parse(JSON.stringify(cur));
@@ -124,6 +141,7 @@ function mergeCfg(cur, inc) {
   ['exp', 'inc'].forEach(k => inc[k].forEach(x => { if (!c[k].includes(x)) c[k].push(x); }));
   Object.entries(inc.budgets).forEach(([k, v]) => { if (!c.budgets[k]) c.budgets[k] = v; });
   const g = new Set(c.goals.map(x => x.id)); inc.goals.forEach(x => { if (!g.has(x.id)) c.goals.push(x); });
+  c.auto = c.auto || defaultAuto();
   return c;
 }
 function toCsv(tx, accName) {
@@ -140,8 +158,8 @@ const DB = {
   open(name = 'khata') {
     return new Promise((res, rej) => {
       const idb = root.indexedDB; if (!idb) return rej(new Error('IndexedDB is not available in this browser'));
-      const r = idb.open(name, 1);
-      r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains('tx')) d.createObjectStore('tx', { keyPath: 'id' }); if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv', { keyPath: 'k' }); };
+      const r = idb.open(name, 2);
+      r.onupgradeneeded = () => { const d = r.result; if (!d.objectStoreNames.contains('tx')) d.createObjectStore('tx', { keyPath: 'id' }); if (!d.objectStoreNames.contains('kv')) d.createObjectStore('kv', { keyPath: 'k' }); if (!d.objectStoreNames.contains('imports')) d.createObjectStore('imports', { keyPath: 'key' }); };
       r.onsuccess = () => { this.db = r.result; this.ok = true; this.db.onversionchange = () => { this.db.close(); this.ok = false; }; res(); };
       r.onerror = () => rej(r.error); r.onblocked = () => rej(new Error('Database is blocked by another tab'));
     });
@@ -158,17 +176,22 @@ const DB = {
   all(st) { return this.run(st, 'readonly', (t, o) => { const q = t.objectStore(st).getAll(); q.onsuccess = () => o(q.result); }); },
   put(st, v) { return this.run(st, 'readwrite', t => t.objectStore(st).put(v)); },
   del(st, k) { return this.run(st, 'readwrite', t => t.objectStore(st).delete(k)); },
-  commit({ clearTx = false, putTx = [], cfg = null }) {
-    return this.run(['tx', 'kv'], 'readwrite', t => { const s = t.objectStore('tx'); if (clearTx) s.clear(); putTx.forEach(x => s.put(x)); if (cfg) t.objectStore('kv').put({ k: 'cfg', v: cfg }); });
+  commit({ clearTx = false, putTx = [], delTx = [], cfg = null, putImports = [], clearImports = false }) {
+    return this.run(['tx', 'kv', 'imports'], 'readwrite', t => {
+      const s = t.objectStore('tx'), im = t.objectStore('imports');
+      if (clearTx) s.clear(); if (clearImports) im.clear();
+      delTx.forEach(id => s.delete(id)); putTx.forEach(x => s.put(x)); putImports.forEach(x => im.put(x));
+      if (cfg) t.objectStore('kv').put({ k: 'cfg', v: cfg });
+    });
   }
 };
 /* Start-up: new install -> zero defaults; existing data (update or restore) is kept and migrated. */
 async function loadOrInit(D) {
-  const rec = (await D.all('kv')).find(x => x.k === 'cfg'), tx = await D.all('tx');
+  const rec = (await D.all('kv')).find(x => x.k === 'cfg'), tx = await D.all('tx'), imports = await D.all('imports');
   let cfg, fresh = false;
   if (rec && rec.v) { cfg = migrate(rec.v); if (rec.v.schema !== SCHEMA) await D.put('kv', { k: 'cfg', v: cfg }); }
   else { cfg = defaultCfg(); fresh = tx.length === 0; await D.put('kv', { k: 'cfg', v: cfg }); }
-  return { cfg, tx, fresh };
+  return { cfg, tx, fresh, imports };
 }
 /* Update metadata (version.json) is untrusted input: strict shape, no markup, bounded sizes. */
 const VER = /^\d{1,4}\.\d{1,4}\.\d{1,4}$/;
@@ -186,6 +209,6 @@ function validateRelease(o) {
   if (o.build != null && o.build !== '' && !/^[0-9a-f]{7,40}$/.test(o.build)) return null;
   return { version: o.version, minVersion: o.minVersion || '', notes: o.notes.slice(), date: o.date || '', build: o.build || '' };
 }
-const Core = { cmpVer, validateRelease, SCHEMA, DEF_EXP, DEF_INC, PAY, toMinor, validDate, defaultCfg, migrate, sumT, balances, byCat, monthSeries, cleanTx, cleanCfg, planImport, mergeCfg, toCsv, DB, loadOrInit };
+const Core = { uid, defaultAuto, cleanAuto, cleanImport, cmpVer, validateRelease, SCHEMA, DEF_EXP, DEF_INC, PAY, toMinor, validDate, defaultCfg, migrate, sumT, balances, byCat, monthSeries, cleanTx, cleanCfg, planImport, mergeCfg, toCsv, DB, loadOrInit };
 root.Core = Core; if (typeof module !== 'undefined') module.exports = Core;
 })(typeof self !== 'undefined' ? self : globalThis);
