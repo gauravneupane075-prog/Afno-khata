@@ -5,7 +5,7 @@ on:
   push:
     tags: ['v*']
 permissions:
-  contents: read
+  contents: write
 jobs:
   apk:
     runs-on: ubuntu-latest
@@ -27,7 +27,17 @@ jobs:
       - run: npx cap sync android
       - run: chmod +x gradlew && ./gradlew assembleDebug
         working-directory: android
+      - name: Name the APK
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk "Khata-$(node -p "require('./package.json').version").apk"
       - uses: actions/upload-artifact@v4
         with:
           name: khata-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: Khata-*.apk
+      - name: Publish APK to GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V=$(node -p "require('./package.json').version")
+          gh release create "apk-v${V}-${GITHUB_RUN_NUMBER}" Khata-*.apk \
+            --title "Khata APK ${V}" \
+            --notes "Debug-signed Android build of Khata ${V}. Download the .apk on your phone and install it. Export a JSON backup before installing over an older APK."
